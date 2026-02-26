@@ -4,7 +4,7 @@
   "description": "Local-first CLI for reading and writing text files stored in Supabase",
   "type": "module",
   "bin": {
-    "northbase": "./src/mybot.mjs"
+    "northbase": "src/mybot.mjs"
   },
   "engines": {
     "node": ">=18"

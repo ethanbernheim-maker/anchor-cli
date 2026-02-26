@@ -1,0 +1,23 @@
+{
+  "name": "mybot-notes-cli",
+  "version": "0.1.0",
+  "description": "Local-first CLI for reading and writing text files stored in Supabase",
+  "type": "module",
+  "bin": {
+    "mybot": "./src/mybot.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5"
+  },
+  "keywords": [
+    "cli",
+    "supabase",
+    "notes",
+    "files"
+  ],
+  "license": "MIT"
+}

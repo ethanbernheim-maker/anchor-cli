@@ -1,4 +1,4 @@
-# mybot-notes-cli
+# northbase
 
 A local-first CLI for reading and writing text files stored in a Supabase `public.files` table. Uses email/password auth with RLS so each user only sees their own files. Session is stored locally — no env file required.
 
@@ -40,7 +40,7 @@ create trigger files_updated_at
 
 ```bash
 npm install
-npm link        # makes `mybot` available globally on your PATH
+npm link        # makes `northbase` available globally on your PATH
 ```
 
 No environment file needed. The Supabase project URL and anon key are public constants baked into the CLI.
@@ -52,27 +52,27 @@ No environment file needed. The Supabase project URL and anon key are public con
 Prompts for your email and password interactively (password is not echoed):
 
 ```bash
-mybot login
+northbase login
 # Email: you@example.com
 # Password:
 # Logged in.
 ```
 
-Your session (access + refresh tokens) is stored at `~/.mybot/session.json` with mode `600`. Tokens are refreshed automatically when they expire — you should only need to log in once.
+Your session (access + refresh tokens) is stored at `~/.northbase/session.json` with mode `600`. Tokens are refreshed automatically when they expire — you should only need to log in once.
 
 ### Log out
 
 ```bash
-mybot logout
+northbase logout
 # Logged out.
 ```
 
-Deletes `~/.mybot/session.json` and signs out server-side.
+Deletes `~/.northbase/session.json` and signs out server-side.
 
 ### Check who you are
 
 ```bash
-mybot whoami
+northbase whoami
 # Logged in as you@example.com (uuid...)
 ```
 
@@ -80,11 +80,11 @@ mybot whoami
 
 ### Get a file
 
-Fetches file content and prints it to stdout. Uses a local cache at `~/.mybot/files/` and only downloads from Supabase when the remote `updated_at` timestamp differs from the cached value.
+Fetches file content and prints it to stdout. Uses a local cache at `~/.northbase/files/` and only downloads from Supabase when the remote `updated_at` timestamp differs from the cached value.
 
 ```bash
-mybot get ideas.md
-mybot get notes/todo.txt
+northbase get ideas.md
+northbase get notes/todo.txt
 ```
 
 ### Put a file
@@ -92,9 +92,9 @@ mybot get notes/todo.txt
 Reads content from stdin, upserts it to Supabase, then updates the local cache.
 
 ```bash
-printf "hello world\n" | mybot put test/cli.md
-cat my-local-file.md   | mybot put ideas.md
-echo "updated content" | mybot put notes/todo.txt
+printf "hello world\n" | northbase put test/cli.md
+cat my-local-file.md   | northbase put ideas.md
+echo "updated content" | northbase put notes/todo.txt
 ```
 
 On success, prints a single confirmation line to stdout:
@@ -108,19 +108,19 @@ PUT ok test/cli.md bytes=12 updated_at=2024-01-15T10:30:00.000Z
 All files are mirrored at:
 
 ```
-~/.mybot/files/<path>
+~/.northbase/files/<path>
 ```
 
 Metadata (timestamps and byte counts) is stored at:
 
 ```
-~/.mybot/index.json
+~/.northbase/index.json
 ```
 
 Session tokens are stored at:
 
 ```
-~/.mybot/session.json    (mode 600 — readable only by you)
+~/.northbase/session.json    (mode 600 — readable only by you)
 ```
 
 The CLI compares `updated_at` timestamps before downloading — if your local copy is current, no content fetch is made.
@@ -135,8 +135,8 @@ The CLI compares `updated_at` timestamps before downloading — if your local co
 Debug logs go to stderr so they never pollute stdout pipelines:
 
 ```
-MYBOT GET local-hit ideas.md        # served from local cache
-MYBOT GET remote-refresh ideas.md   # downloaded from Supabase
-MYBOT PUT test/cli.md bytes=12 updated_at=2024-01-15T10:30:00.000Z
-MYBOT session refreshing            # printed when access token is silently renewed
+NORTHBASE GET local-hit ideas.md        # served from local cache
+NORTHBASE GET remote-refresh ideas.md   # downloaded from Supabase
+NORTHBASE PUT test/cli.md bytes=12 updated_at=2024-01-15T10:30:00.000Z
+NORTHBASE session refreshing            # printed when access token is silently renewed
 ```

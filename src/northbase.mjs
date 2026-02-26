@@ -10,11 +10,11 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = "https://ivxgpjracfctkkdhlwgm.supabase.co";
 const SUPABASE_KEY = "sb_publishable_LZkkAwsx9q5KgIAeoZAO_A_U88rfFHL";
 
-const MYBOT_DIR    = path.join(os.homedir(), ".mybot");
-const ROOT         = path.join(MYBOT_DIR, "files");
-const INDEX_PATH   = path.join(MYBOT_DIR, "index.json");
-const SESSION_PATH = path.join(MYBOT_DIR, "session.json");
-const MAX_BYTES    = 500_000;
+const NORTHBASE_DIR = path.join(os.homedir(), ".northbase");
+const ROOT          = path.join(NORTHBASE_DIR, "files");
+const INDEX_PATH    = path.join(NORTHBASE_DIR, "index.json");
+const SESSION_PATH  = path.join(NORTHBASE_DIR, "session.json");
+const MAX_BYTES     = 500_000;
 
 // ── directory / index helpers ─────────────────────────────────────────────────
 
@@ -43,12 +43,12 @@ function loadSession() {
     if (!s?.access_token || !s?.refresh_token) throw new Error("incomplete");
     return s;
   } catch {
-    throw new Error("Not logged in. Run `mybot login`.");
+    throw new Error("Not logged in. Run `northbase login`.");
   }
 }
 
 function saveSession(session) {
-  ensureDir(MYBOT_DIR);
+  ensureDir(NORTHBASE_DIR);
   fs.writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), { mode: 0o600 });
 }
 
@@ -65,15 +65,15 @@ async function getAuthenticatedClient() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const nowSec   = Math.floor(Date.now() / 1000);
+  const nowSec    = Math.floor(Date.now() / 1000);
   const isExpired = stored.expires_at && nowSec >= stored.expires_at - 60;
 
   if (isExpired) {
-    console.error("MYBOT session refreshing");
+    console.error("NORTHBASE session refreshing");
     const { data, error } = await supabase.auth.refreshSession({
       refresh_token: stored.refresh_token,
     });
-    if (error) throw new Error("Session expired. Run `mybot login` again.");
+    if (error) throw new Error("Session expired. Run `northbase login` again.");
     saveSession(data.session);
     const { error: setErr } = await supabase.auth.setSession({
       access_token:  data.session.access_token,
@@ -85,7 +85,7 @@ async function getAuthenticatedClient() {
       access_token:  stored.access_token,
       refresh_token: stored.refresh_token,
     });
-    if (error) throw new Error("Session invalid. Run `mybot login` again.");
+    if (error) throw new Error("Session invalid. Run `northbase login` again.");
   }
 
   return supabase;
@@ -153,7 +153,7 @@ async function getFile(rel) {
   const cached = idx.files?.[relSafe];
 
   if (local === null) {
-    console.error("MYBOT GET remote-refresh", relSafe);
+    console.error("NORTHBASE GET remote-refresh", relSafe);
     const { content, updated_at } = await fetchRemoteContent(supabase, relSafe);
     const bytes = Buffer.byteLength(content, "utf8");
     if (bytes > MAX_BYTES) throw new Error(`File too large (${bytes} bytes)`);
@@ -167,11 +167,11 @@ async function getFile(rel) {
   if (!remoteUpdatedAt) return local;
 
   if (cached?.updated_at === remoteUpdatedAt) {
-    console.error("MYBOT GET local-hit", relSafe);
+    console.error("NORTHBASE GET local-hit", relSafe);
     return local;
   }
 
-  console.error("MYBOT GET remote-refresh", relSafe);
+  console.error("NORTHBASE GET remote-refresh", relSafe);
   const { content, updated_at } = await fetchRemoteContent(supabase, relSafe);
   const bytes = Buffer.byteLength(content, "utf8");
   if (bytes > MAX_BYTES) throw new Error(`File too large (${bytes} bytes)`);
@@ -201,7 +201,7 @@ async function putFile(rel, content) {
   idx.files[relSafe] = { updated_at, bytes };
   saveIndex(idx);
 
-  console.error("MYBOT PUT", relSafe, `bytes=${bytes}`, `updated_at=${updated_at}`);
+  console.error("NORTHBASE PUT", relSafe, `bytes=${bytes}`, `updated_at=${updated_at}`);
   return { bytes, updated_at };
 }
 
@@ -218,7 +218,7 @@ async function promptLine(question) {
 
 async function promptPassword(question) {
   if (!process.stdin.isTTY) {
-    throw new Error("`mybot login` requires an interactive terminal (stdin is not a TTY).");
+    throw new Error("`northbase login` requires an interactive terminal (stdin is not a TTY).");
   }
   return new Promise((resolve) => {
     process.stdout.write(question);
@@ -305,7 +305,7 @@ async function main() {
 
   if (cmd === "get") {
     const rel = args[0];
-    if (!rel) { console.log("Usage: mybot get <path>"); process.exit(1); }
+    if (!rel) { console.log("Usage: northbase get <path>"); process.exit(1); }
     const content = await getFile(rel);
     process.stdout.write(content);
     return;
@@ -313,7 +313,7 @@ async function main() {
 
   if (cmd === "put") {
     const rel = args[0];
-    if (!rel) { console.log("Usage: mybot put <path>"); process.exit(1); }
+    if (!rel) { console.log("Usage: northbase put <path>"); process.exit(1); }
     const chunks = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
     const content = Buffer.concat(chunks).toString("utf8");
@@ -323,15 +323,15 @@ async function main() {
   }
 
   console.log("Usage:");
-  console.log("  mybot login");
-  console.log("  mybot logout");
-  console.log("  mybot whoami");
-  console.log("  mybot get <path>");
-  console.log("  mybot put <path>");
+  console.log("  northbase login");
+  console.log("  northbase logout");
+  console.log("  northbase whoami");
+  console.log("  northbase get <path>");
+  console.log("  northbase put <path>");
   process.exit(1);
 }
 
 main().catch((e) => {
-  console.error("MYBOT:", e?.message ?? e);
+  console.error("NORTHBASE:", e?.message ?? e);
   process.exit(1);
 });

@@ -1,10 +1,10 @@
 {
-  "name": "mybot-notes-cli",
+  "name": "northbase",
   "version": "0.1.0",
   "description": "Local-first CLI for reading and writing text files stored in Supabase",
   "type": "module",
   "bin": {
-    "mybot": "./src/mybot.mjs"
+    "northbase": "./src/mybot.mjs"
   },
   "engines": {
     "node": ">=18"

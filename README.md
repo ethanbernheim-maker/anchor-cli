@@ -103,6 +103,32 @@ On success, prints a single confirmation line to stdout:
 PUT ok test/cli.md bytes=12 updated_at=2024-01-15T10:30:00.000Z
 ```
 
+### List remote files
+
+Prints every file path stored remotely, one per line. Useful for discovery or scripting.
+
+```bash
+northbase list              # all files
+northbase list memory/      # only paths starting with "memory/"
+```
+
+### Pull (bulk sync)
+
+Downloads all remote files whose `updated_at` differs from the local cache. Useful for "discover and mirror all your notes so an agent can read them locally."
+
+```bash
+northbase pull              # sync everything
+northbase pull memory/      # sync only files under memory/ prefix
+```
+
+Prints a summary line to stdout:
+
+```
+PULL ok files=12 downloaded=3 skipped=9
+```
+
+Per-file download progress goes to stderr. Pull never deletes local files.
+
 ## Local mirror
 
 All files are mirrored at:

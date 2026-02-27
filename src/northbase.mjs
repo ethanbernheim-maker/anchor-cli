@@ -205,6 +205,68 @@ async function putFile(rel, content) {
   return { bytes, updated_at };
 }
 
+// ── concurrency helper ────────────────────────────────────────────────────────
+
+async function concurrentMap(items, limit, fn) {
+  const results = [];
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+// ── list / pull commands ──────────────────────────────────────────────────────
+
+async function cmdList(prefix) {
+  const supabase = await getAuthenticatedClient();
+  let query = supabase.from("files").select("path").order("path", { ascending: true });
+  if (prefix) query = query.like("path", `${prefix}%`);
+  const { data, error } = await query;
+  if (error) throw error;
+  for (const row of data) process.stdout.write(row.path + "\n");
+}
+
+async function cmdPull(prefix) {
+  ensureDir(ROOT);
+  const idx      = loadIndex();
+  const supabase = await getAuthenticatedClient();
+
+  let query = supabase.from("files").select("path, updated_at").order("path", { ascending: true });
+  if (prefix) query = query.like("path", `${prefix}%`);
+  const { data: remote, error } = await query;
+  if (error) throw error;
+
+  let downloaded = 0, skipped = 0;
+
+  await concurrentMap(remote, 5, async (row) => {
+    const rel    = row.path;
+    const cached = idx.files?.[rel];
+    if (cached?.updated_at === row.updated_at) {
+      skipped++;
+      return;
+    }
+    console.error("NORTHBASE PULL download", rel);
+    const { data: rows, error: err } = await supabase
+      .from("files").select("content, updated_at").eq("path", rel).limit(1);
+    if (err) throw err;
+    const content    = rows?.[0]?.content  ?? "";
+    const updated_at = rows?.[0]?.updated_at ?? row.updated_at;
+    const bytes      = Buffer.byteLength(content, "utf8");
+    if (bytes > MAX_BYTES) throw new Error(`File too large (${bytes} bytes): ${rel}`);
+    writeLocal(rel, content);
+    idx.files[rel] = { updated_at, bytes };
+    downloaded++;
+  });
+
+  saveIndex(idx);
+  console.log(`PULL ok files=${remote.length} downloaded=${downloaded} skipped=${skipped}`);
+}
+
 // ── interactive prompts ───────────────────────────────────────────────────────
 
 async function promptLine(question) {
@@ -299,9 +361,11 @@ async function cmdWhoami() {
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
 
-  if (cmd === "login")  { await cmdLogin();  return; }
-  if (cmd === "logout") { await cmdLogout(); return; }
-  if (cmd === "whoami") { await cmdWhoami(); return; }
+  if (cmd === "login")  { await cmdLogin();       return; }
+  if (cmd === "logout") { await cmdLogout();      return; }
+  if (cmd === "whoami") { await cmdWhoami();      return; }
+  if (cmd === "list")   { await cmdList(args[0]); return; }
+  if (cmd === "pull")   { await cmdPull(args[0]); return; }
 
   if (cmd === "get") {
     const rel = args[0];
@@ -326,6 +390,8 @@ async function main() {
   console.log("  northbase login");
   console.log("  northbase logout");
   console.log("  northbase whoami");
+  console.log("  northbase list [prefix]");
+  console.log("  northbase pull [prefix]");
   console.log("  northbase get <path>");
   console.log("  northbase put <path>");
   process.exit(1);

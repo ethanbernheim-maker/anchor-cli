@@ -16,6 +16,11 @@ const INDEX_PATH    = path.join(NORTHBASE_DIR, "index.json");
 const SESSION_PATH  = path.join(NORTHBASE_DIR, "session.json");
 const MAX_BYTES     = 500_000;
 
+const DEBUG = !!process.env.NORTHBASE_DEBUG;
+function debug(...args) {
+  if (DEBUG) console.error("NORTHBASE DEBUG", ...args);
+}
+
 // ── directory / index helpers ─────────────────────────────────────────────────
 
 function ensureDir(p) {
@@ -37,6 +42,13 @@ function saveIndex(idx) {
 
 // ── session helpers ───────────────────────────────────────────────────────────
 
+function normalizeSession(s) {
+  let expiresAt = s.expires_at;
+  if (expiresAt && expiresAt > 1e12) expiresAt = Math.floor(expiresAt / 1000); // ms → s
+  if (!expiresAt && s.expires_in) expiresAt = Math.floor(Date.now() / 1000) + s.expires_in;
+  return { ...s, expires_at: expiresAt ?? 0 };
+}
+
 function loadSession() {
   try {
     const s = JSON.parse(fs.readFileSync(SESSION_PATH, "utf8"));
@@ -49,7 +61,11 @@ function loadSession() {
 
 function saveSession(session) {
   ensureDir(NORTHBASE_DIR);
-  fs.writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), { mode: 0o600 });
+  const normalized = normalizeSession(session);
+  const tmp = SESSION_PATH + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, SESSION_PATH);
+  debug("session.json written expires_at=" + normalized.expires_at);
 }
 
 function deleteSession() {
@@ -58,34 +74,58 @@ function deleteSession() {
 
 // ── authenticated supabase client ─────────────────────────────────────────────
 
+async function doRefresh(supabase, stored) {
+  debug("refresh starting");
+  console.error("NORTHBASE session refreshing");
+  const { data, error } = await supabase.auth.refreshSession({
+    refresh_token: stored.refresh_token,
+  });
+  if (error) {
+    const revoked = error.message?.includes("invalid_grant") || error.status === 400;
+    if (revoked) deleteSession();
+    throw new Error(revoked
+      ? "Session revoked. Run `northbase login`."
+      : `Session refresh failed (${error.message}). Run \`northbase login\`.`
+    );
+  }
+  const newSession = data.session;
+  if (!newSession?.access_token || !newSession?.refresh_token) {
+    throw new Error("Refresh returned incomplete session. Run `northbase login`.");
+  }
+  debug(`refresh ok refresh_token_rotated=${newSession.refresh_token !== stored.refresh_token}`);
+  saveSession(newSession);
+  const { error: setErr } = await supabase.auth.setSession({
+    access_token:  newSession.access_token,
+    refresh_token: newSession.refresh_token,
+  });
+  if (setErr) throw setErr;
+}
+
 async function getAuthenticatedClient() {
-  const stored = loadSession(); // throws "Not logged in" if missing/corrupt
+  const stored = loadSession();
+  debug(`session loaded expires_at=${stored.expires_at}`);
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const nowSec    = Math.floor(Date.now() / 1000);
-  const isExpired = stored.expires_at && nowSec >= stored.expires_at - 60;
+  const nowSec        = Math.floor(Date.now() / 1000);
+  const expiresAt     = stored.expires_at ?? 0;
+  const secsRemaining = expiresAt - nowSec;
+  const needsRefresh  = expiresAt === 0 || secsRemaining <= 60;
+  debug(`seconds_remaining=${secsRemaining} needs_refresh=${needsRefresh}`);
 
-  if (isExpired) {
-    console.error("NORTHBASE session refreshing");
-    const { data, error } = await supabase.auth.refreshSession({
-      refresh_token: stored.refresh_token,
-    });
-    if (error) throw new Error("Session expired. Run `northbase login` again.");
-    saveSession(data.session);
-    const { error: setErr } = await supabase.auth.setSession({
-      access_token:  data.session.access_token,
-      refresh_token: data.session.refresh_token,
-    });
-    if (setErr) throw setErr;
+  if (needsRefresh) {
+    await doRefresh(supabase, stored);
   } else {
     const { error } = await supabase.auth.setSession({
       access_token:  stored.access_token,
       refresh_token: stored.refresh_token,
     });
-    if (error) throw new Error("Session invalid. Run `northbase login` again.");
+    if (error) {
+      debug(`setSession failed (${error.message}) — falling back to refresh`);
+      await doRefresh(supabase, stored);
+    }
   }
 
   return supabase;
@@ -356,16 +396,33 @@ async function cmdWhoami() {
   console.log(`Logged in as ${email} (${id})`);
 }
 
+async function cmdSession() {
+  let stored;
+  try { stored = loadSession(); } catch {
+    console.log("Not logged in.");
+    return;
+  }
+  const nowSec        = Math.floor(Date.now() / 1000);
+  const expiresAt     = stored.expires_at ?? 0;
+  const secsRemaining = expiresAt - nowSec;
+  console.log(`now=${nowSec}`);
+  console.log(`expires_at=${expiresAt}`);
+  console.log(`seconds_remaining=${secsRemaining}`);
+  console.log(`will_refresh_soon=${secsRemaining <= 60}`);
+  console.log(`email=${stored.user?.email ?? "(unknown)"}`);
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
 
-  if (cmd === "login")  { await cmdLogin();       return; }
-  if (cmd === "logout") { await cmdLogout();      return; }
-  if (cmd === "whoami") { await cmdWhoami();      return; }
-  if (cmd === "list")   { await cmdList(args[0]); return; }
-  if (cmd === "pull")   { await cmdPull(args[0]); return; }
+  if (cmd === "login")   { await cmdLogin();        return; }
+  if (cmd === "logout")  { await cmdLogout();       return; }
+  if (cmd === "whoami")  { await cmdWhoami();       return; }
+  if (cmd === "session") { await cmdSession();      return; }
+  if (cmd === "list")    { await cmdList(args[0]);  return; }
+  if (cmd === "pull")    { await cmdPull(args[0]);  return; }
 
   if (cmd === "get") {
     const rel = args[0];
@@ -390,6 +447,7 @@ async function main() {
   console.log("  northbase login");
   console.log("  northbase logout");
   console.log("  northbase whoami");
+  console.log("  northbase session");
   console.log("  northbase list [prefix]");
   console.log("  northbase pull [prefix]");
   console.log("  northbase get <path>");

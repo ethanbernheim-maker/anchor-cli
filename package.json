@@ -1,6 +1,6 @@
 {
   "name": "northbase",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Local-first CLI for reading and writing text files stored in Supabase",
   "type": "module",
   "bin": {

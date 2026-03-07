@@ -236,7 +236,7 @@ async function putFile(rel, content) {
 
   const { error } = await supabase
     .from("files")
-    .upsert({ path: relSafe, content }, { onConflict: "path" });
+    .upsert({ path: relSafe, content }, { onConflict: "owner_id,path" });
   if (error) throw error;
 
   const updated_at = await fetchRemoteUpdatedAt(supabase, relSafe);

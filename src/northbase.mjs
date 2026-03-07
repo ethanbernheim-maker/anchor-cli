@@ -81,12 +81,16 @@ async function doRefresh(supabase, stored) {
     refresh_token: stored.refresh_token,
   });
   if (error) {
-    const revoked = error.message?.includes("invalid_grant") || error.status === 400;
-    if (revoked) deleteSession();
-    throw new Error(revoked
-      ? "Session revoked. Run `northbase login`."
-      : `Session refresh failed (${error.message}). Run \`northbase login\`.`
-    );
+    const revoked = error.message?.includes("invalid_grant")
+                 || error.error === "invalid_grant"
+                 || error.code  === "invalid_grant";
+    if (revoked) {
+      console.error("NORTHBASE session revoked — deleting session.json");
+      deleteSession();
+      throw new Error("Session revoked. Run `northbase login`.");
+    }
+    // Transient error (network, rate limit, etc.) — do NOT delete session.json
+    throw new Error(`Session refresh failed (${error.message}) — session preserved, will retry next command.`);
   }
   const newSession = data.session;
   if (!newSession?.access_token || !newSession?.refresh_token) {
@@ -412,17 +416,59 @@ async function cmdSession() {
   console.log(`email=${stored.user?.email ?? "(unknown)"}`);
 }
 
+async function cmdAuthDebug() {
+  const exists = fs.existsSync(SESSION_PATH);
+  console.log(`session_file_exists=${exists}`);
+  if (!exists) { console.log("status=not_logged_in"); return; }
+
+  let stored;
+  try {
+    stored = JSON.parse(fs.readFileSync(SESSION_PATH, "utf8"));
+  } catch (e) {
+    console.log(`session_file_parse_error=${e.message}`);
+    return;
+  }
+
+  const nowSec        = Math.floor(Date.now() / 1000);
+  const expiresAt     = stored.expires_at ?? 0;
+  const secsRemaining = expiresAt - nowSec;
+
+  console.log(`has_access_token=${!!stored.access_token}`);
+  console.log(`has_refresh_token=${!!stored.refresh_token}`);
+  console.log(`expires_at=${expiresAt}`);
+  console.log(`seconds_remaining=${secsRemaining}`);
+  console.log(`will_refresh_soon=${secsRemaining <= 60}`);
+  console.log(`email=${stored.user?.email ?? "(unknown)"}`);
+
+  let refreshAttempted = false, refreshSucceeded = false, userFetchSucceeded = false;
+  try {
+    const supabase = await getAuthenticatedClient();
+    const after    = JSON.parse(fs.readFileSync(SESSION_PATH, "utf8"));
+    refreshAttempted  = secsRemaining <= 60 || after.expires_at !== expiresAt;
+    refreshSucceeded  = !!after.access_token;
+    const { data, error } = await supabase.auth.getUser();
+    userFetchSucceeded = !error && !!data?.user;
+  } catch (e) {
+    console.log(`auth_error=${e.message}`);
+  }
+
+  console.log(`refresh_attempted=${refreshAttempted}`);
+  console.log(`refresh_succeeded=${refreshSucceeded}`);
+  console.log(`user_fetch_succeeded=${userFetchSucceeded}`);
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
 
-  if (cmd === "login")   { await cmdLogin();        return; }
-  if (cmd === "logout")  { await cmdLogout();       return; }
-  if (cmd === "whoami")  { await cmdWhoami();       return; }
-  if (cmd === "session") { await cmdSession();      return; }
-  if (cmd === "list")    { await cmdList(args[0]);  return; }
-  if (cmd === "pull")    { await cmdPull(args[0]);  return; }
+  if (cmd === "login")      { await cmdLogin();        return; }
+  if (cmd === "logout")     { await cmdLogout();       return; }
+  if (cmd === "whoami")     { await cmdWhoami();       return; }
+  if (cmd === "session")    { await cmdSession();      return; }
+  if (cmd === "auth-debug") { await cmdAuthDebug();    return; }
+  if (cmd === "list")       { await cmdList(args[0]);  return; }
+  if (cmd === "pull")       { await cmdPull(args[0]);  return; }
 
   if (cmd === "get") {
     const rel = args[0];
@@ -448,6 +494,7 @@ async function main() {
   console.log("  northbase logout");
   console.log("  northbase whoami");
   console.log("  northbase session");
+  console.log("  northbase auth-debug");
   console.log("  northbase list [prefix]");
   console.log("  northbase pull [prefix]");
   console.log("  northbase get <path>");

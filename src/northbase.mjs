@@ -82,12 +82,15 @@ async function doRefresh(supabase, stored) {
   });
   if (error) {
     const revoked = error.message?.includes("invalid_grant")
+                 || error.message?.includes("Refresh Token Not Found")
+                 || error.message?.includes("refresh_token_not_found")
                  || error.error === "invalid_grant"
-                 || error.code  === "invalid_grant";
+                 || error.code  === "invalid_grant"
+                 || error.code  === "refresh_token_not_found";
     if (revoked) {
-      console.error("NORTHBASE session revoked — deleting session.json");
+      console.error("NORTHBASE session token invalid — deleting session.json");
       deleteSession();
-      throw new Error("Session revoked. Run `northbase login`.");
+      throw new Error("Refresh token is no longer valid. Run `northbase login`.");
     }
     // Transient error (network, rate limit, etc.) — do NOT delete session.json
     throw new Error(`Session refresh failed (${error.message}) — session preserved, will retry next command.`);
@@ -122,13 +125,21 @@ async function getAuthenticatedClient() {
   if (needsRefresh) {
     await doRefresh(supabase, stored);
   } else {
-    const { error } = await supabase.auth.setSession({
+    const { data: setData, error } = await supabase.auth.setSession({
       access_token:  stored.access_token,
       refresh_token: stored.refresh_token,
     });
     if (error) {
       debug(`setSession failed (${error.message}) — falling back to refresh`);
       await doRefresh(supabase, stored);
+    } else if (setData?.session && setData.session.access_token !== stored.access_token) {
+      // setSession decoded the JWT, found it expired, and internally called _callRefreshToken().
+      // The new tokens are returned in setData.session but NOT written to disk
+      // (persistSession: false suppresses supabase-js's internal _saveSession).
+      // Persist them now — otherwise session.json keeps the consumed refresh_token
+      // and the next command fails with "Refresh Token Not Found".
+      console.error("NORTHBASE setSession triggered internal refresh — persisting new session");
+      saveSession(setData.session);
     }
   }
 
@@ -435,10 +446,18 @@ async function cmdAuthDebug() {
 
   console.log(`has_access_token=${!!stored.access_token}`);
   console.log(`has_refresh_token=${!!stored.refresh_token}`);
+  console.log(`refresh_token_prefix=${stored.refresh_token?.slice(0, 6) ?? "none"}`);
   console.log(`expires_at=${expiresAt}`);
   console.log(`seconds_remaining=${secsRemaining}`);
   console.log(`will_refresh_soon=${secsRemaining <= 60}`);
   console.log(`email=${stored.user?.email ?? "(unknown)"}`);
+
+  try {
+    const stat = fs.statSync(SESSION_PATH);
+    const mtimeSec = Math.floor(stat.mtimeMs / 1000);
+    console.log(`session_file_mtime=${mtimeSec}`);
+    console.log(`session_file_age_seconds=${nowSec - mtimeSec}`);
+  } catch { /* ignore */ }
 
   let refreshAttempted = false, refreshSucceeded = false, userFetchSucceeded = false;
   try {
@@ -446,6 +465,9 @@ async function cmdAuthDebug() {
     const after    = JSON.parse(fs.readFileSync(SESSION_PATH, "utf8"));
     refreshAttempted  = secsRemaining <= 60 || after.expires_at !== expiresAt;
     refreshSucceeded  = !!after.access_token;
+    console.log(`token_silently_refreshed=${after.access_token !== stored.access_token}`);
+    console.log(`refresh_token_rotated=${after.refresh_token?.slice(0,6) !== stored.refresh_token?.slice(0,6)}`);
+    console.log(`new_expires_at=${after.expires_at}`);
     const { data, error } = await supabase.auth.getUser();
     userFetchSucceeded = !error && !!data?.user;
   } catch (e) {
